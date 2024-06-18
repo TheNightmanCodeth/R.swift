@@ -104,6 +104,7 @@ extension RswiftGenerateInternalResources: XcodeBuildToolPlugin {
                     "--target", target.displayName,
                     "--input-type", "xcodeproj",
                     "--bundle-source", "finder",
+                    "--generators", "image,string"
                 ],
                 outputFiles: [rswiftPath]
             ),
