@@ -16,8 +16,9 @@ struct RSwiftConfig: Codable {
         case entitlements, info, id
     }
     
-    let generators: [Generator]
-    // TODO: More options?
+    let generators: [Generator]?
+    let rswiftignorePath: String?
+    let additionalArguments: [String]?
 }
 
 @main
@@ -43,19 +44,16 @@ struct RswiftGenerateInternalResources: BuildToolPlugin {
         let description = "\(target.kind) module \(target.name)"
         
         var additionalArguments: [String] = []
-        if let files = try? FileManager.default.contentsOfDirectory(atPath: target.directory.string) {
-            configCheck: if let config = files.first(where: {$0.contains("rswift.json") }) {
-                guard let url = URL(string: "file://\(config)"),
-                        let fileContents = try? Data(contentsOf: url),
-                        let config = try? JSONDecoder().decode(RSwiftConfig.self, from: fileContents) else {
-                    break configCheck
-                }
-                let generators = config.generators.map(\.rawValue).joined(separator: ",")
-                additionalArguments += ["--generators", "\(generators)"]
+        if let config = getConfig(from: target) {
+            if let generators = config.generators {
+                let generators = generators.map(\.rawValue).joined(separator: ",")
+                additionalArguments += ["--generators", generators]
             }
-            
-            if let ignore = files.first(where: { $0.contains(".rswiftignore") }) {
-                additionalArguments += ["--rswiftignore", ignore]
+            if let rswiftignorePath = config.rswiftignorePath {
+                additionalArguments += ["--rswiftignore", rswiftignorePath]
+            }
+            if let other = config.additionalArguments {
+                additionalArguments += other
             }
         }
         
@@ -72,6 +70,29 @@ struct RswiftGenerateInternalResources: BuildToolPlugin {
             ),
         ]
     }
+    
+    func getConfig(from target: SourceModuleTarget) -> RSwiftConfig? {
+        guard let path = locateConfig(in: target) else {
+            return nil
+        }
+        return decodeConfig(at: path)
+    }
+    
+    func locateConfig(in target: SourceModuleTarget) -> Path? {
+        let rootConfig = target.directory.appending(["rswift.json"])
+        if FileManager.default.fileExists(atPath: rootConfig.string) {
+            return rootConfig
+        }
+        return target.sourceFiles.map(\.path).first(where: { $0.lastComponent == "rswift.json" })
+    }
+    
+    func decodeConfig(at path: Path) -> RSwiftConfig? {
+        guard let config = URL(string: "file://\(path.string)"),
+              let data = try? Data(contentsOf: config) else {
+            return nil
+        }
+        return try? JSONDecoder().decode(RSwiftConfig.self, from: data)
+    }
 }
 
 #if canImport(XcodeProjectPlugin)
@@ -79,7 +100,6 @@ import XcodeProjectPlugin
 
 extension RswiftGenerateInternalResources: XcodeBuildToolPlugin {
     func createBuildCommands(context: XcodePluginContext, target: XcodeTarget) throws -> [Command] {
-
         let resourcesDirectoryPath = context.pluginWorkDirectory
             .appending(subpath: target.displayName)
             .appending(subpath: "Resources")
@@ -94,6 +114,20 @@ extension RswiftGenerateInternalResources: XcodeBuildToolPlugin {
         } else {
             description = target.displayName
         }
+        
+        var additionalArguments: [String] = []
+        if let config = getConfig(from: context.xcodeProject) {
+            if let generators = config.generators {
+                let generators = generators.map(\.rawValue).joined(separator: ",")
+                additionalArguments += ["--generators", generators]
+            }
+            if let rswiftignorePath = config.rswiftignorePath {
+                additionalArguments += ["--rswiftignore", rswiftignorePath]
+            }
+            if let other = config.additionalArguments {
+                additionalArguments += other
+            }
+        }
 
         return [
             .buildCommand(
@@ -103,12 +137,26 @@ extension RswiftGenerateInternalResources: XcodeBuildToolPlugin {
                     "generate", rswiftPath.string,
                     "--target", target.displayName,
                     "--input-type", "xcodeproj",
-                    "--bundle-source", "finder",
-                    "--generators", "image,string"
-                ],
+                    "--bundle-source", "finder"
+                ] + additionalArguments,
                 outputFiles: [rswiftPath]
             ),
         ]
+    }
+    
+    func getConfig(from xcodeProject: XcodeProject) -> RSwiftConfig? {
+        guard let path = locateConfig(in: xcodeProject) else {
+            return nil
+        }
+        return decodeConfig(at: path)
+    }
+    
+    func locateConfig(in xcodeProject: XcodeProject) -> Path? {
+        let rootConfig = xcodeProject.directory.appending(["rswift.json"])
+        if FileManager.default.fileExists(atPath: rootConfig.string) {
+            return rootConfig
+        }
+        return xcodeProject.filePaths.first(where: { $0.lastComponent == "rswift.json" })
     }
 }
 
