@@ -94,6 +94,21 @@ extension RswiftGenerateInternalResources: XcodeBuildToolPlugin {
         } else {
             description = target.displayName
         }
+        
+        var additionalArguments: [String] = []
+        configCheck: if let config = context.xcodeProject.filePaths.first(where: { $0.lastComponent == "rswift.json" }) {
+            guard let url = URL(string: "file://\(config.string)"),
+                    let fileContents = try? Data(contentsOf: url),
+                    let config = try? JSONDecoder().decode(RSwiftConfig.self, from: fileContents) else {
+                break configCheck
+            }
+            let generators = config.generators.map(\.rawValue).joined(separator: ",")
+            additionalArguments += ["--generators", "\(generators)"]
+        }
+        
+        if let ignore = context.xcodeProject.filePaths.first(where: { $0.lastComponent == ".rswiftignore" }) {
+            additionalArguments += ["--rswiftignore", ignore.string]
+        }
 
         return [
             .buildCommand(
@@ -103,9 +118,8 @@ extension RswiftGenerateInternalResources: XcodeBuildToolPlugin {
                     "generate", rswiftPath.string,
                     "--target", target.displayName,
                     "--input-type", "xcodeproj",
-                    "--bundle-source", "finder",
-                    "--generators", "image,string"
-                ],
+                    "--bundle-source", "finder"
+                ] + additionalArguments,
                 outputFiles: [rswiftPath]
             ),
         ]
